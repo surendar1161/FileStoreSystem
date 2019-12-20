@@ -36,6 +36,7 @@ import org.json.simple.JSONValue;
   System requirement : 
   Developed in ubuntu and tested it .
 
+  json-simple1.1.jar - must be added to build path to run this file store
 */
 
 public class FileStoreSystem {
