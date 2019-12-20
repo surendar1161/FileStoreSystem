@@ -1,0 +1,317 @@
+import java.io.File;
+import java.io.FileReader;
+import java.io.FileWriter;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Scanner;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+
+
+
+import org.json.simple.JSONValue;
+
+/*
+   cmds:
+   get key value - gets the value stored in file stores
+   set key value ttl(ttl is optional) - create a new file in the file store with key_ttl or key as file name
+   remove key - deletes the key in the file store
+   break - will close the file store system
+
+  ttl implementation logic
+  
+  case 1: while getting a key's value i will check if timestamp is greater than zero and less than current timemillis if not 
+  they is expired and it will be deleted and inform user like no key is present with the given name
+  
+  case 2: in the first case ttl is done only when user checks for the key . if the user did not query the key itself means the
+  file will be forever it will not be deleted . so a 5 minutes periodic schedular will be runnning and it will clear all the expired 
+  keys in the data store.
+  
+  key should have size length of 32 chars and value should be less than 16 KB
+  
+  if the folder size reached 1gb then new keys will not be created 
+  
+  System requirement : 
+  Developed in ubuntu and tested it .
+
+*/
+
+public class FileStoreSystem {
+	
+	public static final String SET="set";
+	public static final String GET="get";
+	public static final String REMOVE="remove";
+	public static final String BREAK="break";
+	public static String operation,key,value,ttl;
+	public static long filestoresize=0;
+	public static Map<String,String> files=new HashMap<String,String>();
+	
+	public static void main(String args[])
+	
+	{
+		final ScheduledExecutorService schedular=Executors.newScheduledThreadPool(1);
+		
+		
+		String path=System.getProperty("store.path");
+		path=path!=null?path:System.getProperty("user.home");
+		path=path+File.separator+"Documents/filestore/";
+		File dirPath=new File(path);
+		if(!dirPath.exists())
+		{
+			dirPath.mkdirs();
+		}
+		
+		File[] listFiles=dirPath.listFiles();
+		
+		System.out.println("***************************************"+"\n"+
+		"*****WELCOME TO FILESTORE SYSTEM*******"+"\n"+
+				"*****************************************"+"\n\n"+
+				"COMMANDS SUPPORTED :"+"\n"+
+		"for key adding = set key value number(ttl optinal)"+"\n"+
+				"for key retrieval= get key"+"\n"+
+		"for key deletion= remove key\n"+
+				"to shutdown datastore= break\n\n");
+		
+		System.out.println("enter your input");
+		for(int i=0;i<listFiles.length;i++)
+		{
+			if(listFiles[i].isFile())
+			{
+				String mkey;
+				filestoresize+=listFiles[i].length();
+				if(listFiles[i].getName().contains("_"))
+				{
+					int index=listFiles[i].getName().lastIndexOf("_");
+					mkey=listFiles[i].getName().substring(0,index);
+				}
+				else
+				{
+					int index=listFiles[i].getName().indexOf(".");
+					mkey=listFiles[i].getName().substring(0,index);
+				}
+				files.put(mkey,listFiles[i].getName());
+			}
+		}
+		
+		schedular.scheduleAtFixedRate(new ClearKeyTask(path),0,5, TimeUnit.MINUTES);
+		
+		Scanner in=new Scanner(System.in);
+		
+		String input=in.nextLine();
+		
+		while(!input.equals(BREAK))
+		{		
+				
+				String[] inputArray=input.trim().split("\\s+");
+				
+				if(inputArray.length>=2 && inputArray.length<=4)
+				{
+					operation=inputArray[0];
+					key=inputArray[1];
+					
+					if(operation.equals(SET))
+					{
+						if(inputArray.length<=4 && inputArray.length>=3)
+						{
+							if(filestoresize<1073741824)
+							{
+								if(inputArray.length==4)
+								{
+									ttl=inputArray[3];
+								}
+								value=inputArray[2];
+								if(key!=null && key.length()<=32 && value.length()<=16384)
+								{
+									if(ttl!=null)
+									{
+										String tmpKey=key;
+										long timetolive=Integer.parseInt(inputArray[3])*1000;
+										key=key+"_"+(System.currentTimeMillis()+timetolive);
+										files.put(tmpKey,key+".json");
+										setOperation(key,value,path);
+									}
+									else
+									{
+										files.put(key,key+".json");
+										setOperation(key,value,path);
+									}
+								}
+								else
+								{
+									System.out.println("key/value length too long not supported");
+								}
+							}
+							else
+							{
+								System.out.println(" file store size has reached its limit of 1GB remove some keys to add new data");
+							}
+							
+						}
+						else
+						{
+							System.out.println("set operation should be in format - set key value ttl(optinal is ttl)");
+						}
+					}
+					else if(operation.equals(GET))
+					{
+					   String jsonValue=getOperation(key,path);
+					   if(!jsonValue.isEmpty())
+					   {
+						   System.out.println(jsonValue);   
+					   }
+					   else
+					   {
+						   System.out.println("key not present in data store "+key);
+					   }
+					   
+					}
+					else if(operation.equals(REMOVE))
+					{
+						deleteKey(key,path,true);
+					}
+				}
+				else
+				{
+					System.out.println(" give a proper input ");
+				}
+				input=in.nextLine();	
+		}
+		if(input.equals(BREAK))
+		{
+			schedular.shutdown();
+		}
+		
+	}
+	
+	public static void setOperation(String key,String value,String path)
+	{
+		try
+		{
+			FileWriter writer=new FileWriter(new File(path,key+".json"));
+			JSONValue.writeJSONString(value,writer);
+			writer.flush();
+			writer.close();
+		}
+		catch(Exception e)
+		{
+			System.out.println("exception while writing in data store"+e);
+		}
+	}
+	
+	public static String getOperation(String key,String path)
+	{
+		try
+		{
+			String fileName=files.containsKey(key)?files.get(key):null;
+			StringBuffer response=new StringBuffer();
+			long timetolive=0;
+			if(fileName!=null && fileName.contains("_"))
+			{
+				int index=fileName.lastIndexOf("_");
+				int dotIndex=fileName.lastIndexOf(".");
+				timetolive=Long.parseLong(fileName.substring(index+1,dotIndex));
+			}
+			
+			if(fileName!=null && (timetolive>System.currentTimeMillis()|| timetolive==0))
+			{
+				FileReader fr=new FileReader(path+File.separator+fileName);
+				int i;
+				while ((i=fr.read()) != -1)
+				{
+				      response.append((char)i);
+				}
+			}  
+			else if(fileName!=null && timetolive>0 && timetolive<System.currentTimeMillis())
+			{
+				deleteKey(key,path,false);
+			}
+			return response.toString();
+		}
+		catch(Exception e)
+		{
+			System.out.println("exception while reading data store"+e);
+			return new String();
+		}
+	}
+	
+	public static void deleteKey(String key,String path,boolean flag)
+	{
+		try
+		{
+			String fileName=files.get(key);
+			File f=new File(path+File.separator+fileName);
+			if(f.exists())
+			{
+				files.remove(key);
+				if(f.delete() && flag)
+				{
+					System.out.println("key deleted successfully");
+				}
+				else if(flag)
+				{
+					System.out.println(" failed to delete key value pair");
+				}
+			}
+			else
+			{
+				System.out.println("key not found in datastore "+key);
+			}
+			
+		}
+		catch(Exception e)
+		{
+			System.out.println("exception while reading data store"+e);
+		}
+	}
+	
+	public static void clearTtlKeys(String path)
+	{
+		
+		for(String fileName: files.values())
+		{
+			long timetolive=0;
+			if(fileName.contains("_"))
+			{
+				//System.out.print("clear method called");
+				File f=new File(path+File.separator+fileName);
+				int index=fileName.lastIndexOf("_");
+				int dotIndex=fileName.lastIndexOf(".");
+				timetolive=Long.parseLong(fileName.substring(index+1,dotIndex));
+				if(timetolive>0 && timetolive< System.currentTimeMillis())
+				{
+					f.delete();
+				}
+			}
+		}
+	}
+	
+	static class ClearKeyTask implements Runnable {
+	      
+		  String path;
+		  ClearKeyTask(String path)
+		  {
+			  this.path=path;
+		  }
+	      public void run() {
+	         clearTtlKeys(path);      
+	      }
+	   }
+
+}
+
+
+/*
+Unit test cases:
+
+set a {"key":"value"} 
+set bkey {"kumar":1} 60 // this key will be alive for 1 minute
+get a
+set ckey thirdvalue 
+get ckey
+remove ckey  // ckey will be deleted
+
+
+
+*/
