@@ -181,6 +181,7 @@ public class FileStoreSystem {
 		}
 		if(input.equals(BREAK))
 		{
+			in.close();
 			schedular.shutdown();
 		}
 		
@@ -228,6 +229,7 @@ public class FileStoreSystem {
 			{
 				deleteKey(key,path,false);
 			}
+			fr.close();
 			return response.toString();
 		}
 		catch(Exception e)
