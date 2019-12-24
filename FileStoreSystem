@@ -224,12 +224,12 @@ public class FileStoreSystem {
 				{
 				      response.append((char)i);
 				}
+			     fr.close();
 			}  
 			else if(fileName!=null && timetolive>0 && timetolive<System.currentTimeMillis())
 			{
 				deleteKey(key,path,false);
 			}
-			fr.close();
 			return response.toString();
 		}
 		catch(Exception e)
